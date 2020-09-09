@@ -1,0 +1,1 @@
+this content write by rust2 exe
