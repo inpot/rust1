@@ -5,28 +5,90 @@ use std::io::Error;
 use std::io;
 use std::env;
 use std::io::BufReader;
-use std::{thread, io::prelude::*, time::Duration, ops::Deref, fmt::{self, Display}, rc::Rc, sync::{Mutex, mpsc, Arc}};
+use std::{thread, io::prelude::*, time::{SystemTime, Duration}, ops::Deref, fmt::{self, Display}, rc::Rc, sync::{Mutex, mpsc, Arc}};
 use mpsc::{Sender, channel};
 use std::future::Future;
 use fmt::Debug;
 use std::net;
-use std::os;
+use std::{ os};
+use tokio::task;
+use reqwest::Proxy;
 
 mod thread_pool;
-async fn test(){
+fn gfwlist2Dnsmasq() {
   //let andr = os::android;
 
-  let local = "127.0.0.1:5353";
-  let ipsetName = "gfwlist";
-  println!("content {}, {}", ipsetName, local);
-  let res = reqwest::get("http://pl.goinbowl.com").await.ok().unwrap().text().await.ok().unwrap();
-  println!("content {}",res);
+  let dns= "127.0.0.1#5353";
+  let ipset= "gfwlist";
+  //let res = reqwest::get("http://pl.goinbowl.com").await.ok().unwrap().text().await.ok().unwrap();
+     //let res = reqwest::blocking::get("http://127.0.0.1:8088").unwrap().text().unwrap();
+  let content = get_gfwlist();
+  match content {
+      Ok(txt) => {
+        println!("Text  {}",txt);
+        let mut resultStr = String::new(); 
+        let mut line_size = 0;
+        let mut  ignored =String::new();
+        for line in txt.lines(){ 
+          if line.starts_with("." ){
+            let target = line[1..line.len()].to_string(); 
+            processLine(&mut resultStr, &target, dns, ipset)
+          }else if line.starts_with("||"){ 
+            let target = line[2..line.len()].to_string(); 
+            processLine(&mut resultStr, &target, dns, ipset) 
+          }else{
+            println!("Do not proccessed line: {}",line);
+            ignored.push_str(line);
+            ignored.push_str("\n");
+            continue;
+          } 
+        } 
+        let filePath = "gfwlist.conf";
+        let ignoredPath= "ignored.conf";
+        
+        let res1 = write_file(ignored, &ignoredPath);
+        //let mut file = File::open(filePath).unwrap()//.unwrap_or_else(||{File::create(filePath)});
+        let res = write_file(resultStr, &filePath);
+        match res {
+          Ok(_)=>{println!("Write success!!!")}
+          Err(error)=>{println!("write file error occurred!! {:?}",error)}
+        }
+
+      },
+      Err(error) => {
+        println!("get gfwList Error {:?}",error)
+      },
+  }
 
 }
 
-async fn writeFile(content:String, file: &str) ->Result<String,Error>{ 
-    fs::write(file, content).unwrap();
-    Ok("OK".to_string()) 
+  fn processLine(result:&mut String,target:&str,dns:&str,ipset:&str){ 
+             let dns_line = format!("server=/{}/{}\n",target,dns);
+               result.push_str(&dns_line);
+             let ipset_line = format!("ipset=/{}/{}\n",target,ipset); 
+               result.push_str(&ipset_line); 
+  }
+
+fn get_gfwlist()-> Result<String, Box<dyn std::error::Error>> {
+
+     let proxy = Proxy::https("http://127.0.0.1:8001").unwrap();
+     let http_client = reqwest::blocking::ClientBuilder::new().proxy(proxy).build()?;
+     let req = http_client.get("https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt").build()?;
+    let res = http_client.execute(req)?.text()?.replace("\n", "");
+
+                  let decoded = base64::decode_config(res, base64::Config::new(base64::CharacterSet::Standard, false))?;
+                        let text = String::from_utf8(decoded)?;
+                                   println!("we got decode content {:?}",text.lines().count());
+                                   Ok(text)
+
+
+
+}
+
+
+fn write_file(content:String, file: &str) ->Result<(),Error>{ 
+    let count = fs::write(file, content)?;
+    Ok(()) 
 }
 
 fn testServer(){
@@ -41,7 +103,8 @@ fn testServer(){
       pool.execute(move||{
 
 
-      println!("we got a tcp_stream ");
+        let addr = tcp_stream.local_addr().unwrap().to_string();
+      println!("we got a tcp_stream from {} ",addr);
       let mut buffer = vec![0;512];
       let size = tcp_stream.read(&mut buffer).unwrap();
       let content = String::from_utf8_lossy(&buffer);
@@ -97,10 +160,20 @@ fn testServer(){
 
 
 fn main() {
-  testServer();
+
+//  let server_thread =  thread::spawn(||{
+
+//   testServer();
+
+//   });
+   gfwlist2Dnsmasq();
+
+
+
+//   server_thread.join().unwrap();
+
   // println!("main start ");
 
-  //  let tt = test();
   // println!("main test end ");
   // thread::sleep(Duration::from_secs(5));
 
